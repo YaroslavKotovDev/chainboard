@@ -1,0 +1,28 @@
+{
+  "name": "@chainboard/utils",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Framework-agnostic utility functions for ChainBoard",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\""
+  },
+  "dependencies": {
+    "@chainboard/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@chainboard/config": "workspace:*",
+    "@types/node": "^22.19.17",
+    "typescript": "^5.8.3"
+  }
+}

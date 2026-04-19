@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --surface-1: 240 5% 7%;
+    --surface-2: 240 4% 11%;
+    --surface-3: 240 4% 15%;
+
+    --border: 240 4% 18%;
+    --ring: 221 83% 53%;
+
+    --muted: 240 4% 18%;
+    --muted-foreground: 240 5% 55%;
+
+    --accent-primary: 221 83% 53%;
+    --accent-primary-hover: 221 83% 47%;
+
+    --accent-reward: 160 84% 39%;
+    --accent-reward-hover: 160 84% 33%;
+
+    --accent-destructive: 0 84% 60%;
+    --accent-warning: 38 92% 50%;
+
+    --chart-1: 221 83% 53%;
+    --chart-2: 160 84% 39%;
+    --chart-3: 280 65% 60%;
+    --chart-4: 38 92% 50%;
+    --chart-5: 0 84% 60%;
+
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}

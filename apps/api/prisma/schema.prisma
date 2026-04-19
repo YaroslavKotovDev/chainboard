@@ -1,0 +1,304 @@
+// ============================================================
+// ChainBoard — Prisma Schema
+// PostgreSQL + Prisma ORM
+// All IDs use cuid() for non-sequential, URL-safe identifiers
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// Enums
+// ============================================================
+
+enum RoleName {
+  USER
+  ADMIN
+  REVIEWER
+}
+
+enum RewardStatus {
+  ACTIVE
+  PAUSED
+  EXPIRED
+}
+
+enum ClaimStatus {
+  PENDING
+  SUBMITTED
+  CONFIRMED
+  FAILED
+  REJECTED
+}
+
+enum TransactionStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  REJECTED
+}
+
+enum SnapshotScope {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+// ============================================================
+// Models
+// ============================================================
+
+/// Central identity record. One user may hold many wallets.
+model User {
+  id          String   @id @default(cuid())
+  displayName String?  // Nullable: user may not have set a display name
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  role               Role?
+  wallets            Wallet[]
+  sessions           Session[]
+  claims             Claim[]
+  auditLogs          AuditLog[]
+
+  @@map("users")
+}
+
+/// Blockchain wallet address linked to a user.
+/// A user may connect multiple wallets across chains.
+model Wallet {
+  id         String   @id @default(cuid())
+  address    String   @unique // Checksummed EVM address — globally unique
+  chainId    Int                // EIP-155 chain ID (e.g. 84532 = Base Sepolia)
+  isVerified Boolean  @default(false)
+  label      String?  // Nullable: user-assigned label, e.g. "Main wallet"
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Foreign keys
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Relations
+  transactions       Transaction[]
+  claims             Claim[]
+  analyticsSnapshots AnalyticsSnapshot[]
+
+  @@index([userId])
+  @@index([chainId])
+  @@map("wallets")
+}
+
+/// Active authentication session. Stores hashed token for secure rotation.
+model Session {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique // Hashed JWT — never store raw tokens
+  expiresAt  DateTime
+  revokedAt  DateTime? // Nullable: null means session is still active
+  ipAddress  String?   // Nullable: may be unavailable behind proxies
+  userAgent  String?   // Nullable: some clients omit this header
+  createdAt  DateTime  @default(now())
+
+  // Foreign keys
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt]) // Efficient cleanup of expired sessions
+  @@map("sessions")
+}
+
+/// Durable SIWE nonce record keyed by wallet address.
+/// Preserves one-time use semantics across restarts and multiple API instances.
+model SiweNonce {
+  id         String    @id @default(cuid())
+  address    String    @unique
+  chainId    Int
+  nonce      String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([expiresAt])
+  @@index([consumedAt])
+  @@map("siwe_nonces")
+}
+
+/// User role assignment. One role per user (enforced by unique FK).
+model Role {
+  id        String   @id @default(cuid())
+  name      RoleName @default(USER)
+  createdAt DateTime @default(now())
+
+  // Foreign keys
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("roles")
+}
+
+/// A reward program users can claim from (on-chain or off-chain).
+model Reward {
+  id            String       @id @default(cuid())
+  title         String
+  description   String?      // Nullable: short rewards may not need one
+  status        RewardStatus @default(ACTIVE)
+  totalAmount   Decimal      @db.Decimal(38, 18) // 18 decimal precision for ERC-20
+  claimedAmount Decimal      @default(0) @db.Decimal(38, 18)
+  startAt       DateTime
+  endAt         DateTime
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  claims Claim[]
+
+  @@index([status])
+  @@index([startAt, endAt]) // Efficient active-window queries
+  @@map("rewards")
+}
+
+/// A user's claim on a reward program.
+/// @@unique prevents the same wallet from claiming the same reward twice.
+model Claim {
+  id        String      @id @default(cuid())
+  status    ClaimStatus @default(PENDING)
+  claimedAt DateTime?   // Nullable: set when status reaches CONFIRMED
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  // EIP-712 authorization fields (populated by authorizeClaimSignature)
+  nonce     Int?        // On-chain nonce at time of signing
+  deadline  DateTime?   // Signature expiry
+  signature String?     // Operator EIP-712 signature (hex)
+
+  // Foreign keys
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  rewardId String
+  reward   Reward @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  // Relations
+  transactions Transaction[]
+
+  // One wallet cannot claim the same reward twice
+  @@unique([userId, rewardId, walletId])
+  @@index([userId, status])    // User's claim list filtered by status
+  @@index([rewardId, status])  // Reward's claim queue filtered by status
+  @@map("claims")
+}
+
+/// On-chain transaction record linked to a wallet and optionally a claim.
+model Transaction {
+  id          String            @id @default(cuid())
+  hash        String                              // Raw tx hash (may be duplicate across chains)
+  chainId     Int
+  status      TransactionStatus @default(PENDING)
+  blockNumber BigInt?           // Nullable: unknown until confirmed
+  gasUsed     BigInt?           // Nullable: unknown until confirmed
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  // Foreign keys
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  claimId String? // Nullable: some transactions are not tied to a claim
+  claim   Claim?  @relation(fields: [claimId], references: [id], onDelete: SetNull)
+
+  @@unique([hash, chainId]) // A tx hash is unique per chain
+  @@index([walletId, chainId])
+  @@index([claimId])
+  @@index([status])
+  @@map("transactions")
+}
+
+/// Time-series analytics snapshot for dashboard charts.
+/// Scoped to a period and optional wallet for per-wallet breakdowns.
+model AnalyticsSnapshot {
+  id          String        @id @default(cuid())
+  scope       SnapshotScope
+  metric      String        // e.g. "claims_count", "success_rate", "active_wallets"
+  value       Float
+  periodStart DateTime
+  periodEnd   DateTime
+  createdAt   DateTime      @default(now())
+
+  // Foreign keys
+  walletId String? // Nullable: null = global metric, non-null = per-wallet metric
+  wallet   Wallet? @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([scope, metric, periodStart]) // Primary chart query pattern
+  @@index([walletId, scope])            // Per-wallet chart queries
+  @@map("analytics_snapshots")
+}
+
+/// Idempotent record of every decoded contract log ingested by the sync worker.
+/// The @@unique constraint prevents duplicate processing on retry/replay.
+model BlockchainEvent {
+  id              String    @id @default(cuid())
+  chainId         Int
+  contractAddress String
+  transactionHash String
+  logIndex        Int
+  blockNumber     BigInt
+  eventName       String    // e.g. "ClaimSubmitted", "ClaimExecuted", "Released"
+  decodedData     Json      // Decoded event args — structure varies per event type
+  processedAt     DateTime? // Nullable: null means ingested but not yet projected
+  createdAt       DateTime  @default(now())
+
+  // Idempotency: same log cannot be inserted twice
+  @@unique([chainId, transactionHash, logIndex])
+  @@index([chainId, contractAddress, blockNumber]) // Cursor-based sync queries
+  @@index([eventName, processedAt])                // Projection queue queries
+  @@map("blockchain_events")
+}
+
+/// Durable cursor for block-range polling workers.
+/// Ensures event sync resumes deterministically after restarts.
+model BlockchainSyncCursor {
+  id                 String   @id @default(cuid())
+  chainId            Int
+  contractAddress    String
+  eventName          String
+  lastProcessedBlock BigInt?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([chainId, contractAddress, eventName])
+  @@index([chainId, contractAddress])
+  @@map("blockchain_sync_cursors")
+}
+
+/// Append-only audit trail. References entities by string ID to survive deletions.
+/// Never cascade-deleted: audit records must outlive the entities they describe.
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String   // e.g. "CLAIM_APPROVED", "ROLE_CHANGED", "REWARD_PAUSED"
+  entityType String   // e.g. "Claim", "User", "Reward"
+  entityId   String   // ID of the affected entity (string ref, not FK)
+  metadata   Json?    // Nullable: only for genuinely unstructured diff data
+  ipAddress  String?  // Nullable: may be unavailable in some admin contexts
+  createdAt  DateTime @default(now())
+
+  // Foreign keys — actor reference only; log survives user deletion via Restrict
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([entityType, entityId]) // Lookup all logs for a specific entity
+  @@index([createdAt])            // Time-ordered audit trail pagination
+  @@map("audit_logs")
+}

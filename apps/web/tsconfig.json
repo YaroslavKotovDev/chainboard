@@ -1,0 +1,33 @@
+{
+  "extends": "@chainboard/config/nextjs",
+  "compilerOptions": {
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "@chainboard/types": [
+        "../../packages/types/src/index.ts"
+      ],
+      "@chainboard/ui": [
+        "../../packages/ui/src/index.ts"
+      ],
+      "@chainboard/utils": [
+        "../../packages/utils/src/index.ts"
+      ],
+      "@chainboard/contracts": [
+        "../../packages/contracts/src/index.ts"
+      ]
+    },
+    "noEmit": true,
+    "isolatedModules": true
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

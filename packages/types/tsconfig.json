@@ -1,0 +1,9 @@
+{
+  "extends": "@chainboard/config/typescript",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
